@@ -2,52 +2,69 @@
 #include <iostream>
 #include <String.h>
 #include <MediaKit.h>
-
-// Wavegen state
-typedef struct {
-	float val;
-	float dir;
-} ck_state;
+#include <StorageKit.h>
 
 void
-makeBuffer(void *pcookie, void *buffer, size_t size, const media_raw_audio_format &format) {
-	size_t i,j;
-	float *buf = (float*) buffer;
-	size_t float_size = size/4;
-	uint32 numCh = format.channel_count;
-	ck_state *cookie = (ck_state *) pcookie;
+makeBuffer(void *_btrack, void *_buffer, size_t size, const media_raw_audio_format &format) {
+	status_t err;
+	BMediaTrack *btrack = (BMediaTrack *) _btrack;
 	
-	// Only accept float
-	if(format.format != media_raw_audio_format::B_AUDIO_FLOAT) return;
-	
-	// fill buffer
-	for(i=0; i<float_size; i+=numCh) {
-		for(j=0; j<numCh; j++){
-			buf[i+j] = cookie->val;
-		}
-		if((cookie->dir == 1.0) && (cookie->val >= 1.0)) cookie->dir = -1.0;
-		else if((cookie->dir == -1.0) && (cookie->val <= -1.0)) cookie->dir = 1.0;
-		
-		cookie->val += cookie->dir*(1.0/64.0);
+	int64 dummy;
+	err = btrack->ReadFrames(_buffer, &dummy);
+	if(err) {
+		printf("Playback failed: %s\n", strerror(err));
+		return;
 	}
 }
 
 void
-playWave() {
-	ck_state cookie;
-	cookie.val = 0.0; cookie.dir = 1.0;
+playWave(char* path) {
+	entry_ref* mref = new entry_ref();
+	status_t err;
 	
-	BSoundPlayer plr("SimplePlayer playback", makeBuffer, NULL, &cookie);
+	err = get_ref_for_path(path, mref);
+	if(err) {
+		printf("Cannot open file: %s\n", strerror(err));
+		return;
+	}
+	 
+	BMediaFile mfile(mref);
+	if(mfile.InitCheck() != B_OK) {
+		printf("Cannot read file: %s\n", strerror(mfile.InitCheck()));
+		return;
+	}
+	
+	BMediaTrack* mtrk = mfile.TrackAt(0);
+	
+	media_format fmt;
+	err = mtrk->DecodedFormat(&fmt);
+	if(err) {
+		printf("Format negotiation failed: %s\n", strerror(err));
+		return;
+	}
+	BSoundPlayer plr(&fmt.u.raw_audio, "SimplePlayer playback", makeBuffer, NULL, mtrk);
 	plr.Start(); plr.SetHasData(true);
+	printf("Playback started!\n");
+	
+	std::cin.ignore();
+	
+	printf("Jumping to midpoint");
+	int64 midpt = mtrk->CountFrames()/2;
+	mtrk->SeekToFrame(&midpt);
+	
+	std::cin.ignore();
+	
+	plr.Stop();
 }
 
 
 int
-main() {
+main(int arg_c, char* args[]) {
 	BString Hello("Welcome to C++!\n");
 	std::cout << Hello;
-	playWave();
-	scanf("\n");
+	
+	if(!args[1]) args[1] = "/boot/home/Desktop/Demo/Cloud 9.ogg";
+	playWave(args[1]);
 	return 0;
 }
 
